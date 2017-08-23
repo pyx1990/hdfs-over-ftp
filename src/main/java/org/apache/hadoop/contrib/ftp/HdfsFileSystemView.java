@@ -23,6 +23,11 @@ public class HdfsFileSystemView implements FileSystemView {
 
 	private boolean caseInsensitive = false;
 
+	// is kerberos enabled
+	private boolean isKerberos;
+	private String keytab;
+	private String principal;
+
 	/**
 	 * Constructor - set the user object.
 	 */
@@ -59,18 +64,29 @@ public class HdfsFileSystemView implements FileSystemView {
 	}
 
 	/**
+	 * Constructor - set the user object.
+	 */
+	protected HdfsFileSystemView(User user, boolean isKerberos, String keytab, String principal)
+			throws FtpException {
+		this(user);
+		this.isKerberos = isKerberos;
+		this.keytab = keytab;
+		this.principal = principal;
+	}
+
+	/**
 	 * Get the user home directory. It would be the file system root for the
 	 * user.
 	 */
 	public FileObject getHomeDirectory() {
-		return new HdfsFileObject("/", user);
+		return new HdfsFileObject("/", user, isKerberos, keytab, principal);
 	}
 
 	/**
 	 * Get the current directory.
 	 */
 	public FileObject getCurrentDirectory() {
-		return new HdfsFileObject(currDir, user);
+		return new HdfsFileObject(currDir, user, isKerberos, keytab, principal);
 	}
 
 	/**
@@ -85,7 +101,7 @@ public class HdfsFileSystemView implements FileSystemView {
 		} else {
 			path = "/" + file;
 		}
-		return new HdfsFileObject(path, user);
+		return new HdfsFileObject(path, user, isKerberos, keytab, principal);
 	}
 
 	/**
@@ -100,7 +116,7 @@ public class HdfsFileSystemView implements FileSystemView {
 		} else {
 			path = "/" + dir;
 		}
-		HdfsFileObject file = new HdfsFileObject(path, user);
+		HdfsFileObject file = new HdfsFileObject(path, user, isKerberos, keytab, principal);
 		if (file.isDirectory() && file.hasReadPermission()) {
 			currDir = path;
 			return true;

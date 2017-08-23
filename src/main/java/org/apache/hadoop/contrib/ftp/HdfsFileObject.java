@@ -8,15 +8,18 @@ import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.fs.permission.FsPermission;
 import org.apache.hadoop.hdfs.DistributedFileSystem;
+import org.apache.hadoop.security.UserGroupInformation;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.security.PrivilegedExceptionAction;
 
 /**
  * This class implements all actions to HDFS
+ *
  */
 public class HdfsFileObject implements FileObject {
 
@@ -25,15 +28,45 @@ public class HdfsFileObject implements FileObject {
 	private Path path;
 	private HdfsUser user;
 
+	private boolean isKerberos;
+	private String keytab;
+	private String principal;
+
 	/**
 	 * Constructs HdfsFileObject from path
 	 *
 	 * @param path path to represent object
 	 * @param user accessor of the object
 	 */
-	public HdfsFileObject(String path, User user) {
+	public HdfsFileObject(String path, User user, boolean isKerberos, String keytab, String principal) {
 		this.path = new Path(path);
 		this.user = (HdfsUser) user;
+		this.isKerberos = isKerberos;
+		this.keytab = keytab;
+		this.principal = principal;
+	}
+
+	/**
+	 * Login from keytab and create proxy ugi
+	 *
+	 * @param user accessor of the object
+	 * @param isKerberos authentication enabled
+	 * @param keytab keytab file if authentication enabled
+	 * @param principal principal if authentication enabled
+	 */
+	public UserGroupInformation loginAndCreateProxyUser(User user,
+			boolean isKerberos, String keytab, String principal) throws IOException {
+		if(isKerberos) {
+			if(null == keytab || keytab.isEmpty() || null == principal || principal.isEmpty()) {
+				throw new IOException("Kerberos authentication enabled, keytab-path and principal in " +
+						"hdfs-over-ftp.properties can not be empty.");
+			} else {
+				return UserGroupInformation.createProxyUser(user.getName(),
+						UserGroupInformation.loginUserFromKeytabAndReturnUGI(principal, keytab));
+			}
+		} else {
+			return UserGroupInformation.getCurrentUser();
+		}
 	}
 
 	/**
@@ -76,10 +109,16 @@ public class HdfsFileObject implements FileObject {
 	public boolean isDirectory() {
 		try {
 			log.debug("is directory? : " + path);
-			DistributedFileSystem dfs = HdfsOverFtpSystem.getDfs();
-			FileStatus fs = dfs.getFileStatus(path);
-			return fs.isDir();
-		} catch (IOException e) {
+			return loginAndCreateProxyUser(user, isKerberos, keytab, principal).
+					doAs(new PrivilegedExceptionAction<Boolean> () {
+				@Override
+				public Boolean run() throws Exception {
+					DistributedFileSystem dfs = HdfsOverFtpSystem.getDfs();
+					FileStatus fs = dfs.getFileStatus(path);
+					return fs.isDir();
+				}
+			});
+		} catch (IOException | InterruptedException e) {
 			log.debug(path + " is not dir", e);
 			return false;
 		}
@@ -92,13 +131,19 @@ public class HdfsFileObject implements FileObject {
 	 * @throws IOException if path doesn't exist so we get permissions of parent object in that case
 	 */
 	private FsPermission getPermissions() throws IOException {
-//        try {
-		DistributedFileSystem dfs = HdfsOverFtpSystem.getDfs();
-		return dfs.getFileStatus(path).getPermission();
-//        } catch (IOException e) {
-//            e.printStackTrace();
-//            return null;
-//        }
+		try {
+			FsPermission permission = loginAndCreateProxyUser(user, isKerberos, keytab, principal).
+        doAs(new PrivilegedExceptionAction<FsPermission>() {
+				  @Override
+          public FsPermission run() throws Exception {
+					  DistributedFileSystem dfs = HdfsOverFtpSystem.getDfs();
+						return dfs.getFileStatus(path).getPermission();
+					}
+				});
+			return permission;
+		} catch (InterruptedException e) {
+			throw new IOException(e);
+		}
 	}
 
 	/**
@@ -108,9 +153,15 @@ public class HdfsFileObject implements FileObject {
 	 */
 	public boolean isFile() {
 		try {
-			DistributedFileSystem dfs = HdfsOverFtpSystem.getDfs();
-			return dfs.isFile(path);
-		} catch (IOException e) {
+      return loginAndCreateProxyUser(user, isKerberos, keytab, principal).
+        doAs(new PrivilegedExceptionAction<Boolean> () {
+          @Override
+          public Boolean run() throws Exception {
+            DistributedFileSystem dfs = HdfsOverFtpSystem.getDfs();
+            return dfs.isFile(path);
+          }
+        });
+		} catch (IOException | InterruptedException e) {
 			log.debug(path + " is not file", e);
 			return false;
 		}
@@ -123,10 +174,16 @@ public class HdfsFileObject implements FileObject {
 	 */
 	public boolean doesExist() {
 		try {
-			DistributedFileSystem dfs = HdfsOverFtpSystem.getDfs();
-			dfs.getFileStatus(path);
-			return true;
-		} catch (IOException e) {
+      return loginAndCreateProxyUser(user, isKerberos, keytab, principal).
+        doAs(new PrivilegedExceptionAction<Boolean> () {
+          @Override
+          public Boolean run() throws Exception {
+            DistributedFileSystem dfs = HdfsOverFtpSystem.getDfs();
+            dfs.getFileStatus(path);
+            return true;
+          }
+        });
+		} catch (IOException | InterruptedException e) {
 			//   log.debug(path + " does not exist", e);
 			return false;
 		}
@@ -139,25 +196,25 @@ public class HdfsFileObject implements FileObject {
 	 */
 	public boolean hasReadPermission() {
 		try {
-			FsPermission permissions = getPermissions();
-			if (user.getName().equals(getOwnerName())) {
-				if (permissions.toString().substring(0, 1).equals("r")) {
-					log.debug("PERMISSIONS: " + path + " - " + " read allowed for user");
-					return true;
-				}
-			} else if (user.isGroupMember(getGroupName())) {
-				if (permissions.toString().substring(3, 4).equals("r")) {
-					log.debug("PERMISSIONS: " + path + " - " + " read allowed for group");
-					return true;
-				}
-			} else {
-				if (permissions.toString().substring(6, 7).equals("r")) {
-					log.debug("PERMISSIONS: " + path + " - " + " read allowed for others");
-					return true;
-				}
-			}
-			log.debug("PERMISSIONS: " + path + " - " + " read denied");
-			return false;
+      FsPermission permissions = getPermissions();
+      if (user.getName().equals(getOwnerName())) {
+        if (permissions.toString().substring(0, 1).equals("r")) {
+          log.debug("PERMISSIONS: " + path + " - " + " read allowed for user");
+          return true;
+        }
+      } else if (user.isGroupMember(getGroupName())) {
+        if (permissions.toString().substring(3, 4).equals("r")) {
+          log.debug("PERMISSIONS: " + path + " - " + " read allowed for group");
+          return true;
+        }
+      } else {
+        if (permissions.toString().substring(6, 7).equals("r")) {
+          log.debug("PERMISSIONS: " + path + " - " + " read allowed for others");
+          return true;
+        }
+      }
+      log.debug("PERMISSIONS: " + path + " - " + " read denied");
+      return false;
 		} catch (IOException e) {
 			e.printStackTrace();  //To change body of catch statement use File | Settings | File Templates.
 			return false;
@@ -171,7 +228,7 @@ public class HdfsFileObject implements FileObject {
 		if (pos > 0) {
 			parentS = pathS.substring(0, pos);
 		}
-		return new HdfsFileObject(parentS, user);
+		return new HdfsFileObject(parentS, user, isKerberos, keytab, principal);
 	}
 
 	/**
@@ -221,10 +278,16 @@ public class HdfsFileObject implements FileObject {
 	 */
 	public String getOwnerName() {
 		try {
-			DistributedFileSystem dfs = HdfsOverFtpSystem.getDfs();
-			FileStatus fs = dfs.getFileStatus(path);
-			return fs.getOwner();
-		} catch (IOException e) {
+      return loginAndCreateProxyUser(user, isKerberos, keytab, principal).
+        doAs(new PrivilegedExceptionAction<String> () {
+          @Override
+          public String run() throws Exception {
+            DistributedFileSystem dfs = HdfsOverFtpSystem.getDfs();
+            FileStatus fs = dfs.getFileStatus(path);
+            return fs.getOwner();
+          }
+        });
+		} catch (IOException | InterruptedException e) {
 			e.printStackTrace();
 			return null;
 		}
@@ -237,10 +300,16 @@ public class HdfsFileObject implements FileObject {
 	 */
 	public String getGroupName() {
 		try {
-			DistributedFileSystem dfs = HdfsOverFtpSystem.getDfs();
-			FileStatus fs = dfs.getFileStatus(path);
-			return fs.getGroup();
-		} catch (IOException e) {
+			return loginAndCreateProxyUser(user, isKerberos, keytab, principal).
+        doAs(new PrivilegedExceptionAction<String> () {
+          @Override
+          public String run() throws Exception {
+            DistributedFileSystem dfs = HdfsOverFtpSystem.getDfs();
+            FileStatus fs = dfs.getFileStatus(path);
+            return fs.getGroup();
+          }
+        });
+		} catch (IOException | InterruptedException e) {
 			e.printStackTrace();
 			return null;
 		}
@@ -262,10 +331,16 @@ public class HdfsFileObject implements FileObject {
 	 */
 	public long getLastModified() {
 		try {
-			DistributedFileSystem dfs = HdfsOverFtpSystem.getDfs();
-			FileStatus fs = dfs.getFileStatus(path);
-			return fs.getModificationTime();
-		} catch (IOException e) {
+			return loginAndCreateProxyUser(user, isKerberos, keytab, principal).
+        doAs(new PrivilegedExceptionAction<Long> () {
+          @Override
+          public Long run() throws Exception {
+            DistributedFileSystem dfs = HdfsOverFtpSystem.getDfs();
+            FileStatus fs = dfs.getFileStatus(path);
+            return fs.getModificationTime();
+          }
+        });
+		} catch (IOException | InterruptedException e) {
 			e.printStackTrace();
 			return 0;
 		}
@@ -278,11 +353,17 @@ public class HdfsFileObject implements FileObject {
 	 */
 	public long getSize() {
 		try {
-			DistributedFileSystem dfs = HdfsOverFtpSystem.getDfs();
-			FileStatus fs = dfs.getFileStatus(path);
-			log.info("getSize(): " + path + " : " + fs.getLen());
-			return fs.getLen();
-		} catch (IOException e) {
+			return loginAndCreateProxyUser(user, isKerberos, keytab, principal).
+        doAs(new PrivilegedExceptionAction<Long> () {
+          @Override
+          public Long run() throws Exception {
+            DistributedFileSystem dfs = HdfsOverFtpSystem.getDfs();
+            FileStatus fs = dfs.getFileStatus(path);
+            log.info("getSize(): " + path + " : " + fs.getLen());
+            return fs.getLen();
+          }
+        });
+		} catch (IOException | InterruptedException e) {
 			e.printStackTrace();
 			return 0;
 		}
@@ -301,11 +382,17 @@ public class HdfsFileObject implements FileObject {
 		}
 
 		try {
-			DistributedFileSystem dfs = HdfsOverFtpSystem.getDfs();
-			dfs.mkdirs(path);
-			dfs.setOwner(path, user.getName(), user.getMainGroup());
-			return true;
-		} catch (IOException e) {
+			return loginAndCreateProxyUser(user, isKerberos, keytab, principal).
+        doAs(new PrivilegedExceptionAction<Boolean> () {
+          @Override
+          public Boolean run() throws Exception {
+            DistributedFileSystem dfs = HdfsOverFtpSystem.getDfs();
+            dfs.mkdirs(path);
+            //dfs.setOwner(path, user.getName(), user.getMainGroup());
+            return true;
+          }
+        });
+		} catch (IOException | InterruptedException e) {
 			e.printStackTrace();
 			return false;
 		}
@@ -318,10 +405,16 @@ public class HdfsFileObject implements FileObject {
 	 */
 	public boolean delete() {
 		try {
-			DistributedFileSystem dfs = HdfsOverFtpSystem.getDfs();
-			dfs.delete(path, true);
-			return true;
-		} catch (IOException e) {
+			return loginAndCreateProxyUser(user, isKerberos, keytab, principal).
+        doAs(new PrivilegedExceptionAction<Boolean> () {
+          @Override
+          public Boolean run() throws Exception {
+            DistributedFileSystem dfs = HdfsOverFtpSystem.getDfs();
+            dfs.delete(path, true);
+            return true;
+          }
+        });
+		} catch (IOException | InterruptedException e) {
 			e.printStackTrace();
 			return false;
 		}
@@ -333,12 +426,18 @@ public class HdfsFileObject implements FileObject {
 	 * @param fileObject location to move the object
 	 * @return true if the object is moved successfully
 	 */
-	public boolean move(FileObject fileObject) {
+	public boolean move(final FileObject fileObject) {
 		try {
-			DistributedFileSystem dfs = HdfsOverFtpSystem.getDfs();
-			dfs.rename(path, new Path(fileObject.getFullName()));
-			return true;
-		} catch (IOException e) {
+			return loginAndCreateProxyUser(user, isKerberos, keytab, principal).
+        doAs(new PrivilegedExceptionAction<Boolean> () {
+          @Override
+          public Boolean run() throws Exception {
+            DistributedFileSystem dfs = HdfsOverFtpSystem.getDfs();
+            dfs.rename(path, new Path(fileObject.getFullName()));
+            return true;
+          }
+        });
+		} catch (IOException | InterruptedException e) {
 			e.printStackTrace();
 			return false;
 		}
@@ -357,15 +456,21 @@ public class HdfsFileObject implements FileObject {
 		}
 
 		try {
-			DistributedFileSystem dfs = HdfsOverFtpSystem.getDfs();
-			FileStatus fileStats[] = dfs.listStatus(path);
+      FileStatus fileStats [] = loginAndCreateProxyUser(user, isKerberos, keytab, principal).
+        doAs(new PrivilegedExceptionAction<FileStatus[]> () {
+          @Override
+          public FileStatus[] run() throws Exception {
+            DistributedFileSystem dfs = HdfsOverFtpSystem.getDfs();
+            return dfs.listStatus(path);
+          }
+        });
 
 			FileObject fileObjects[] = new FileObject[fileStats.length];
 			for (int i = 0; i < fileStats.length; i++) {
-				fileObjects[i] = new HdfsFileObject(fileStats[i].getPath().toString(), user);
+				fileObjects[i] = new HdfsFileObject(fileStats[i].getPath().toString(), user, isKerberos, keytab, principal);
 			}
 			return fileObjects;
-		} catch (IOException e) {
+		} catch (IOException | InterruptedException e) {
 			log.debug("", e);
 			return null;
 		}
@@ -386,11 +491,17 @@ public class HdfsFileObject implements FileObject {
 		}
 
 		try {
-			DistributedFileSystem dfs = HdfsOverFtpSystem.getDfs();
-			FSDataOutputStream out = dfs.create(path);
-			dfs.setOwner(path, user.getName(), user.getMainGroup());
-			return out;
-		} catch (IOException e) {
+			 return loginAndCreateProxyUser(user, isKerberos, keytab, principal).
+        doAs(new PrivilegedExceptionAction<OutputStream> () {
+          @Override
+          public OutputStream run() throws Exception {
+            DistributedFileSystem dfs = HdfsOverFtpSystem.getDfs();
+            FSDataOutputStream out = dfs.create(path);
+            //dfs.setOwner(path, user.getName(), user.getMainGroup());
+            return out;
+          }
+        });
+		} catch (IOException | InterruptedException e) {
 			e.printStackTrace();
 			return null;
 		}
@@ -409,10 +520,16 @@ public class HdfsFileObject implements FileObject {
 			throw new IOException("No read permission : " + path);
 		}
 		try {
-			DistributedFileSystem dfs = HdfsOverFtpSystem.getDfs();
-			FSDataInputStream in = dfs.open(path);
-			return in;
-		} catch (IOException e) {
+			return loginAndCreateProxyUser(user, isKerberos, keytab, principal).
+        doAs(new PrivilegedExceptionAction<InputStream> () {
+          @Override
+          public InputStream run() throws Exception {
+            DistributedFileSystem dfs = HdfsOverFtpSystem.getDfs();
+            FSDataInputStream in = dfs.open(path);
+            return in;
+          }
+        });
+		} catch (IOException | InterruptedException e) {
 			e.printStackTrace();
 			return null;
 		}

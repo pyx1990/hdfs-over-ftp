@@ -18,8 +18,8 @@ public class HdfsOverFtpSystem {
 
 	public static String HDFS_URI = "";
 
-	private static String superuser = "error";
-	private static String supergroup = "supergroup";
+	//private static String superuser = "error";
+	//private static String supergroup = "supergroup";
 
 	private final static Logger log = LoggerFactory.getLogger(HdfsOverFtpSystem.class);
 
@@ -27,7 +27,7 @@ public class HdfsOverFtpSystem {
 	private static void hdfsInit() throws IOException {
 		dfs = new DistributedFileSystem();
 		Configuration conf = new Configuration();
-		conf.set("hadoop.job.ugi", superuser + "," + supergroup);
+		//conf.set("hadoop.job.ugi", superuser + "," + supergroup);
 		try {
 			dfs.initialize(new URI(HDFS_URI), conf);
 		} catch (URISyntaxException e) {
@@ -52,14 +52,14 @@ public class HdfsOverFtpSystem {
 		return dfs;
 	}
 
-	/**
-	 * Set superuser. and we connect to DFS as a superuser
-	 *
-	 * @param superuser
-	 */
-	public static void setSuperuser(String superuser) {
-		HdfsOverFtpSystem.superuser = superuser;
-	}
+//	/**
+//	 * Set superuser. and we connect to DFS as a superuser
+//	 *
+//	 * @param superuser
+//	 */
+//	public static void setSuperuser(String superuser) {
+//		HdfsOverFtpSystem.superuser = superuser;
+//	}
 
 //  public static String dirList(String path) throws IOException {
 //    String res = "";

@@ -4,6 +4,7 @@ import org.apache.ftpserver.DefaultDataConnectionConfiguration;
 import org.apache.ftpserver.FtpServer;
 import org.apache.ftpserver.interfaces.DataConnectionConfiguration;
 import org.apache.log4j.Logger;
+import org.apache.log4j.PropertyConfigurator;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -16,15 +17,20 @@ import java.util.Properties;
  */
 public class HdfsOverFtpServer {
 
-	private static Logger log = Logger.getLogger(HdfsOverFtpServer.class);
+	static final Logger log = Logger.getLogger(HdfsOverFtpServer.class);
 
 	private static int port = 0;
 	private static int sslPort = 0;
 	private static String passivePorts = null;
 	private static String sslPassivePorts = null;
 	private static String hdfsUri = null;
+	private static boolean isKerberos = false;
+  private static String keytab = null;
+  private static String principal = null;
 
 	public static void main(String[] args) throws Exception {
+		//PropertyConfigurator.configure("log4j.conf");
+
 		loadConfig();
 
 		if (port != 0) {
@@ -43,7 +49,9 @@ public class HdfsOverFtpServer {
 	 */
 	private static void loadConfig() throws IOException {
 		Properties props = new Properties();
-		props.load(new FileInputStream(loadResource("/hdfs-over-ftp.properties")));
+		String confPath = System.getProperty("conf.file");
+  	//props.load(new FileInputStream(loadResource("hdfs-over-ftp.properties")));
+		props.load(new FileInputStream(new File(confPath)));
 
 		try {
 			port = Integer.parseInt(props.getProperty("port"));
@@ -62,7 +70,7 @@ public class HdfsOverFtpServer {
 		if (port != 0) {
 			passivePorts = props.getProperty("data-ports");
 			if (passivePorts == null) {
-				log.fatal("data-ports is not set");
+				log.error("data-ports is not set");
 				System.exit(1);
 			}
 		}
@@ -70,23 +78,35 @@ public class HdfsOverFtpServer {
 		if (sslPort != 0) {
 			sslPassivePorts = props.getProperty("ssl-data-ports");
 			if (sslPassivePorts == null) {
-				log.fatal("ssl-data-ports is not set");
+				log.error("ssl-data-ports is not set");
 				System.exit(1);
 			}
 		}
 
 		hdfsUri = props.getProperty("hdfs-uri");
 		if (hdfsUri == null) {
-			log.fatal("hdfs-uri is not set");
+			log.error("hdfs-uri is not set");
 			System.exit(1);
 		}
 
-		String superuser = props.getProperty("superuser");
+		/*String superuser = props.getProperty("superuser");
 		if (superuser == null) {
 			log.fatal("superuser is not set");
 			System.exit(1);
 		}
-		HdfsOverFtpSystem.setSuperuser(superuser);
+		HdfsOverFtpSystem.setSuperuser(superuser);*/
+		String isKerberosParam = props.getProperty("kerberos-enable");
+		isKerberos = Boolean.parseBoolean(isKerberosParam);
+
+		if (isKerberos) {
+      keytab = props.getProperty("keytab-path");
+      principal = props.getProperty("principal");
+      if (keytab == null || principal == null || keytab.isEmpty() || principal.isEmpty()) {
+        log.error("Kerberos authentication enabled, keytab-path and principal in " +
+            "hdfs-over-ftp.properties can not be empty.");
+        System.exit(1);
+      }
+    }
 	}
 
 	/**
@@ -110,22 +130,33 @@ public class HdfsOverFtpServer {
 
 
 		HdfsUserManager userManager = new HdfsUserManager();
-		final File file = loadResource("/users.properties");
+
+		String usersPath = System.getProperty("users.file");
+		final File file = new File(usersPath);
 
 		userManager.setFile(file);
 
 		server.setUserManager(userManager);
 
-		server.setFileSystem(new HdfsFileSystemManager());
+		server.setFileSystem(new HdfsFileSystemManager(isKerberos, keytab, principal));
 
 		server.start();
 	}
 
 	private static File loadResource(String resourceName) {
-		final URL resource = HdfsOverFtpServer.class.getResource(resourceName);
+		/*final URL resource = HdfsOverFtpServer.class.getResource(resourceName);
+		if (resource == null) {
+			throw new RuntimeException("Resource not found: " + resourceName);
+		}*/
+		ClassLoader cL = Thread.currentThread().getContextClassLoader();
+		if (cL == null) {
+			cL = HdfsOverFtpServer.class.getClassLoader();
+		}
+		final URL resource = cL.getResource(resourceName);
 		if (resource == null) {
 			throw new RuntimeException("Resource not found: " + resourceName);
 		}
+
 		return new File(resource.getFile());
 	}
 
@@ -162,8 +193,7 @@ public class HdfsOverFtpServer {
 
 		server.setUserManager(userManager);
 
-		server.setFileSystem(new HdfsFileSystemManager());
-
+		server.setFileSystem(new HdfsFileSystemManager(isKerberos, keytab, principal));
 
 		server.start();
 	}

@@ -19,8 +19,7 @@ import java.util.*;
  */
 public class HdfsUserManager extends AbstractUserManager {
 
-	private final Logger LOG = LoggerFactory
-			.getLogger(HdfsUserManager.class);
+	private final Logger LOG = LoggerFactory.getLogger(HdfsUserManager.class);
 
 	private final static String DEPRECATED_PREFIX = "FtpServer.user.";
 

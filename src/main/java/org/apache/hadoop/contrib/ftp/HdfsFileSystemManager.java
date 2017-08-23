@@ -9,7 +9,19 @@ import org.apache.ftpserver.ftplet.User;
  * Impelented FileSystemManager to use HdfsFileSystemView
  */
 public class HdfsFileSystemManager implements FileSystemManager {
+	private boolean isKerberos;
+	private String keytab;
+	private String principal;
+
+
+	public HdfsFileSystemManager(boolean isKerberos, String keytab, String principal) {
+		this.isKerberos = isKerberos;
+		this.keytab = keytab;
+		this.principal = principal;
+	}
+
+
 	public FileSystemView createFileSystemView(User user) throws FtpException {
-		return new HdfsFileSystemView(user);
+		return new HdfsFileSystemView(user, isKerberos, keytab, principal);
 	}
 }
