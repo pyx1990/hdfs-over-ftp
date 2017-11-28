@@ -4,12 +4,15 @@ import org.apache.ftpserver.ftplet.FileObject;
 import org.apache.ftpserver.ftplet.FileSystemView;
 import org.apache.ftpserver.ftplet.FtpException;
 import org.apache.ftpserver.ftplet.User;
+import org.apache.hadoop.fs.ftp.FTPException;
+import org.apache.log4j.Logger;
 
 /**
  * Implemented FileSystemView to use HdfsFileObject
  */
 public class HdfsFileSystemView implements FileSystemView {
 
+	static final Logger log = Logger.getLogger(HdfsFileSystemView.class);
 	// the root directory will always end with '/'.
 	private String rootDir = "/";
 
@@ -22,11 +25,6 @@ public class HdfsFileSystemView implements FileSystemView {
 	// private boolean writePermission;
 
 	private boolean caseInsensitive = false;
-
-	// is kerberos enabled
-	private boolean isKerberos;
-	private String keytab;
-	private String principal;
 
 	/**
 	 * Constructor - set the user object.
@@ -60,39 +58,28 @@ public class HdfsFileSystemView implements FileSystemView {
 
 		this.user = user;
 
-
-	}
-
-	/**
-	 * Constructor - set the user object.
-	 */
-	protected HdfsFileSystemView(User user, boolean isKerberos, String keytab, String principal)
-			throws FtpException {
-		this(user);
-		this.isKerberos = isKerberos;
-		this.keytab = keytab;
-		this.principal = principal;
+        this.currDir = user.getHomeDirectory();
 	}
 
 	/**
 	 * Get the user home directory. It would be the file system root for the
 	 * user.
 	 */
-	public FileObject getHomeDirectory() {
-		return new HdfsFileObject("/", user, isKerberos, keytab, principal);
+	public FileObject getHomeDirectory() throws FtpException{
+		return new HdfsFileObject(user.getHomeDirectory(), user);
 	}
 
 	/**
 	 * Get the current directory.
 	 */
-	public FileObject getCurrentDirectory() {
-		return new HdfsFileObject(currDir, user, isKerberos, keytab, principal);
+	public FileObject getCurrentDirectory() throws FtpException {
+		return new HdfsFileObject(currDir, user);
 	}
 
 	/**
 	 * Get file object.
 	 */
-	public FileObject getFileObject(String file) {
+	public FileObject getFileObject(String file) throws FtpException {
 		String path;
 		if (file.startsWith("/")) {
 			path = file;
@@ -101,13 +88,13 @@ public class HdfsFileSystemView implements FileSystemView {
 		} else {
 			path = "/" + file;
 		}
-		return new HdfsFileObject(path, user, isKerberos, keytab, principal);
+		return new HdfsFileObject(path, user);
 	}
 
 	/**
 	 * Change directory.
 	 */
-	public boolean changeDirectory(String dir) {
+	public boolean changeDirectory(String dir) throws FtpException{
 		String path;
 		if (dir.startsWith("/")) {
 			path = dir;
@@ -116,7 +103,7 @@ public class HdfsFileSystemView implements FileSystemView {
 		} else {
 			path = "/" + dir;
 		}
-		HdfsFileObject file = new HdfsFileObject(path, user, isKerberos, keytab, principal);
+		HdfsFileObject file = new HdfsFileObject(path, user);
 		if (file.isDirectory() && file.hasReadPermission()) {
 			currDir = path;
 			return true;

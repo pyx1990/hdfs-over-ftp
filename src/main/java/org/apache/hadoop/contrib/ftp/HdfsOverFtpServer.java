@@ -89,12 +89,6 @@ public class HdfsOverFtpServer {
 			System.exit(1);
 		}
 
-		/*String superuser = props.getProperty("superuser");
-		if (superuser == null) {
-			log.fatal("superuser is not set");
-			System.exit(1);
-		}
-		HdfsOverFtpSystem.setSuperuser(superuser);*/
 		String isKerberosParam = props.getProperty("kerberos-enable");
 		isKerberos = Boolean.parseBoolean(isKerberosParam);
 
@@ -197,4 +191,6 @@ public class HdfsOverFtpServer {
 
 		server.start();
 	}
+
+
 }
