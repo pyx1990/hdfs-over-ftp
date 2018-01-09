@@ -1,8 +1,11 @@
 package org.apache.hadoop.contrib.ftp;
 
+import org.apache.ftpserver.DefaultConnectionConfig;
 import org.apache.ftpserver.DefaultDataConnectionConfiguration;
+import org.apache.ftpserver.DefaultFtpServerContext;
 import org.apache.ftpserver.FtpServer;
 import org.apache.ftpserver.interfaces.DataConnectionConfiguration;
+import org.apache.ftpserver.interfaces.FtpServerContext;
 import org.apache.log4j.Logger;
 import org.apache.log4j.PropertyConfigurator;
 
@@ -25,8 +28,9 @@ public class HdfsOverFtpServer {
 	private static String sslPassivePorts = null;
 	private static String hdfsUri = null;
 	private static boolean isKerberos = false;
-  private static String keytab = null;
-  private static String principal = null;
+    private static String keytab = null;
+    private static String principal = null;
+    private static int maxLogins = 0;
 
 	public static void main(String[] args) throws Exception {
 		//PropertyConfigurator.configure("log4j.conf");
@@ -100,6 +104,12 @@ public class HdfsOverFtpServer {
             "hdfs-over-ftp.properties can not be empty.");
         System.exit(1);
       }
+
+			try {
+				maxLogins = Integer.parseInt(props.getProperty("maxLogins"));
+			} catch (Exception e) {
+				maxLogins = 0;
+			}
     }
 	}
 
@@ -115,13 +125,17 @@ public class HdfsOverFtpServer {
 
 		HdfsOverFtpSystem.setHDFS_URI(hdfsUri);
 
-		FtpServer server = new FtpServer();
+		DefaultFtpServerContext serverContext = new DefaultFtpServerContext();
+		DefaultConnectionConfig connectionConfig = new DefaultConnectionConfig();
+		connectionConfig.setMaxLogins(maxLogins);
+		serverContext.setConnectionConfig(connectionConfig);
+
+		FtpServer server = new FtpServer(serverContext);
 
 		DataConnectionConfiguration dataCon = new DefaultDataConnectionConfiguration();
 		dataCon.setPassivePorts(passivePorts);
 		server.getListener("default").setDataConnectionConfiguration(dataCon);
 		server.getListener("default").setPort(port);
-
 
 		HdfsUserManager userManager = new HdfsUserManager();
 
